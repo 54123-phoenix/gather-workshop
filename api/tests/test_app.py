@@ -91,6 +91,15 @@ def test_demo_reset_restores_seed(client):
     assert len(client.get("/api/events/e1/registrations").json()["items"]) == 3
 
 
+def test_lost_response_can_follow_a_successful_write(client):
+    response = register(client, headers={"X-Demo-Fail": "after"})
+    assert response.status_code == 503
+    registrations = client.get("/api/events/e1/registrations").json()["items"]
+    assert len(registrations) == 4
+    assert sum(row["email"] == "new@example.test" for row in registrations) == 1
+    assert register(client, event="e3", headers={"X-Demo-Fail": "after"}).status_code == 409
+
+
 def test_concurrent_registrations_cannot_exceed_capacity(client):
     def submit(index):
         return register(client, email=f"concurrent{index}@example.test").status_code

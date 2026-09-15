@@ -19,17 +19,18 @@ export interface Registration {
   createdAt: string
 }
 
-let simulateFailure = false
+export type FailureMode = 'none' | 'before' | 'after'
+let failureMode: FailureMode = 'none'
 
-export function setSimulateFailure(enabled: boolean) {
-  simulateFailure = enabled
+export function setFailureMode(mode: FailureMode) {
+  failureMode = mode
 }
 
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body) headers.set('Content-Type', 'application/json')
-  if (simulateFailure && !['GET', 'HEAD'].includes(init.method ?? 'GET')) {
-    headers.set('X-Demo-Fail', '1')
+  if (failureMode !== 'none' && !['GET', 'HEAD'].includes(init.method ?? 'GET')) {
+    headers.set('X-Demo-Fail', failureMode === 'before' ? '1' : 'after')
   }
   const response = await fetch(`/api${path}`, { ...init, headers })
   const data = await response.json()

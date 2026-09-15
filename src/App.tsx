@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
-  addRegistration, getEvents, getRegistrations, resetDemo, setSimulateFailure,
-  type Event, type Registration,
+  addRegistration, getEvents, getRegistrations, resetDemo, setFailureMode,
+  type Event, type FailureMode, type Registration,
 } from './api'
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '请求失败，请重试。'
@@ -16,7 +16,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [failWrites, setFailWrites] = useState(false)
+  const [failureMode, updateFailureMode] = useState<FailureMode>('none')
   const [reloadKey, setReloadKey] = useState(0)
   const event = events.find((item) => item.id === selectedId)
   const refresh = useCallback(() => setReloadKey((key) => key + 1), [])
@@ -142,9 +142,17 @@ export default function App() {
         </div>
 
         <details className="demo-tools"><summary>演示工具</summary><div>
-          <label className="checkbox-label"><input type="checkbox" checked={failWrites} onChange={(e) => { setFailWrites(e.target.checked); setSimulateFailure(e.target.checked) }} />模拟写入失败（读取正常）</label>
+          <label className="failure-control">故障模式<select value={failureMode} onChange={(e) => {
+            const mode = e.target.value as FailureMode
+            updateFailureMode(mode)
+            setFailureMode(mode)
+          }}>
+            <option value="none">正常请求</option>
+            <option value="before">写入前失败（数据不变）</option>
+            <option value="after">写入后响应丢失（数据可能已变）</option>
+          </select></label>
           <button className="text-button" onClick={reset} disabled={busy || loading}>恢复演示数据</button>
-          <p>开启后，写请求会收到 503；关闭即可恢复。所有人物、邮箱和活动均为虚构。</p>
+          <p>两种故障都会返回 503，读取不受影响。重试或恢复数据前请切回正常请求。所有人物、邮箱和活动均为虚构。</p>
         </div></details>
       </main>
       <footer className="page-footer"><span>GATHER / A SMALL COMMUNITY WORKSPACE</span><span>虚构场景 · 本地运行 · 无外部服务</span></footer>

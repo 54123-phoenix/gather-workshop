@@ -92,9 +92,16 @@ app = FastAPI(title="Gather Workshop Demo", version="0.1.0")
 
 @app.middleware("http")
 async def demo_failure(request: Request, call_next):
-    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.headers.get("X-Demo-Fail") == "1":
+    writing = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+    failure = request.headers.get("X-Demo-Fail")
+    if writing and failure == "1":
         return JSONResponse(status_code=503, content={"detail": "Simulated service failure. Please try again."})
-    return await call_next(request)
+    response = await call_next(request)
+    if writing and failure == "after" and 200 <= response.status_code < 300:
+        return JSONResponse(status_code=503, content={
+            "detail": "Simulated lost response: the write may have succeeded. Verify before retrying."
+        })
+    return response
 
 
 app.add_middleware(
