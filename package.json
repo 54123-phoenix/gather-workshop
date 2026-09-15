@@ -1,0 +1,24 @@
+{
+  "name": "gather-workshop",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "engines": { "node": ">=20.0.0" },
+  "scripts": {
+    "setup:api": "uv sync --project api --frozen",
+    "dev": "node scripts/dev.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "uv run --project api pytest api/tests -q",
+    "build": "tsc --noEmit && vite build",
+    "check": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": { "react": "18.3.1", "react-dom": "18.3.1" },
+  "devDependencies": {
+    "@types/react": "18.3.20",
+    "@types/react-dom": "18.3.6",
+    "@vitejs/plugin-react": "4.4.1",
+    "typescript": "5.8.3",
+    "vite": "6.3.6"
+  }
+}
