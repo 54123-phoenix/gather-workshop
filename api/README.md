@@ -37,3 +37,7 @@ invalid input returns 422. Event counts are derived from active registrations.
 
 To demonstrate a recoverable server failure, send `X-Demo-Fail: 1` on a write
 request. It returns 503 without changing memory. Read requests are unaffected.
+
+Send `X-Demo-Fail: after` to simulate a lost success response: a successful
+write is applied, but its response is replaced with 503. Requests that already
+fail keep their original error response. Read requests are unaffected.
