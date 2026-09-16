@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 import re
 from threading import Lock
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -26,6 +27,14 @@ class RegistrationInput(BaseModel):
         if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
             raise ValueError("Enter a valid email address")
         return value.casefold()
+
+
+class RegistrationUpdate(BaseModel):
+    status: Literal["cancelled"]
+
+
+class EventCapacityUpdate(BaseModel):
+    capacity: int = Field(ge=0, strict=True)
 
 
 def seed_events() -> list[dict]:
@@ -85,6 +94,19 @@ class MemoryStore:
         return [item for item in self.registrations
                 if item["eventId"] == event_id and item["status"] == "active"]
 
+    def promote_waitlisted(self, event_id: str) -> None:
+        """Fill available places in FIFO order. The caller must hold ``self.lock``."""
+        event = self.event(event_id)
+        available = event["capacity"] - len(self.active_registrations(event_id))
+        if available <= 0:
+            return
+        for registration in self.registrations:
+            if available == 0:
+                break
+            if registration["eventId"] == event_id and registration["status"] == "waitlisted":
+                registration["status"] = "active"
+                available -= 1
+
 
 store = MemoryStore()
 app = FastAPI(title="Gather Workshop Demo", version="0.1.0")
@@ -138,17 +160,61 @@ def create_registration(event_id: str, payload: RegistrationInput) -> dict:
     with store.lock:
         event = store.event(event_id)
         active = store.active_registrations(event_id)
-        if any(item["email"].casefold() == payload.email for item in active):
+        if any(
+            item["eventId"] == event_id
+            and item["status"] in {"active", "waitlisted"}
+            and item["email"].casefold() == payload.email
+            for item in store.registrations
+        ):
             raise HTTPException(409, "This email is already registered for this event")
-        if len(active) >= event["capacity"]:
-            raise HTTPException(409, "This event is full")
         registration = {
             "id": f"r-{uuid4().hex}", "eventId": event_id,
-            "name": payload.name, "email": payload.email, "status": "active",
+            "name": payload.name, "email": payload.email,
+            "status": "active" if len(active) < event["capacity"] else "waitlisted",
             "createdAt": datetime.now(timezone.utc).isoformat(),
         }
         store.registrations.append(registration)
         return dict(registration)
+
+
+@app.patch("/api/events/{event_id}/registrations/{registration_id}")
+def cancel_registration(
+    event_id: str, registration_id: str, payload: RegistrationUpdate
+) -> dict:
+    with store.lock:
+        store.event(event_id)
+        registration = next(
+            (
+                item for item in store.registrations
+                if item["eventId"] == event_id and item["id"] == registration_id
+            ),
+            None,
+        )
+        if registration is None:
+            raise HTTPException(404, "Registration not found")
+        if registration["status"] == "cancelled":
+            return dict(registration)
+
+        was_active = registration["status"] == "active"
+        registration["status"] = payload.status
+        if was_active:
+            store.promote_waitlisted(event_id)
+        return dict(registration)
+
+
+@app.patch("/api/events/{event_id}")
+def update_event_capacity(event_id: str, payload: EventCapacityUpdate) -> dict:
+    with store.lock:
+        event = store.event(event_id)
+        active_count = len(store.active_registrations(event_id))
+        if payload.capacity < active_count:
+            raise HTTPException(409, "Capacity cannot be lower than the active registration count")
+
+        previous_capacity = event["capacity"]
+        event["capacity"] = payload.capacity
+        if payload.capacity > previous_capacity:
+            store.promote_waitlisted(event_id)
+        return {**event, "activeCount": len(store.active_registrations(event_id))}
 
 
 @app.post("/api/demo/reset")

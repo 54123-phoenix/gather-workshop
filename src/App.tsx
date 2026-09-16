@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
-  addRegistration, getEvents, getRegistrations, resetDemo, setFailureMode,
+  addRegistration, cancelRegistration, getEvents, getRegistrations, resetDemo,
+  setFailureMode, updateEventCapacity,
   type Event, type FailureMode, type Registration,
 } from './api'
 
@@ -10,8 +11,10 @@ export default function App() {
   const [events, setEvents] = useState<Event[]>([])
   const [selectedId, setSelectedId] = useState('e1')
   const [registrations, setRegistrations] = useState<Registration[]>([])
+  const [registrationsEventId, setRegistrationsEventId] = useState('')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+  const [capacityInput, setCapacityInput] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -20,6 +23,25 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0)
   const event = events.find((item) => item.id === selectedId)
   const refresh = useCallback(() => setReloadKey((key) => key + 1), [])
+  const registrationStats = registrations.reduce((counts, registration) => {
+    counts[registration.status] += 1
+    return counts
+  }, { active: 0, waitlisted: 0, cancelled: 0 })
+  const rosterReady = registrationsEventId === selectedId
+  const activeCount = rosterReady ? registrationStats.active : null
+  const waitlistedCount = rosterReady ? registrationStats.waitlisted : null
+  const cancelledCount = rosterReady ? registrationStats.cancelled : null
+  const remainingCount = event && activeCount !== null
+    ? Math.max(event.capacity - activeCount, 0)
+    : null
+  const waitlistPositions = new Map<string, number>()
+  let waitlistPosition = 0
+  registrations.forEach((registration) => {
+    if (registration.status === 'waitlisted') {
+      waitlistPosition += 1
+      waitlistPositions.set(registration.id, waitlistPosition)
+    }
+  })
 
   useEffect(() => {
     let active = true
@@ -29,6 +51,9 @@ export default function App() {
         if (!active) return
         setEvents(eventData.items)
         setRegistrations(registrationData.items)
+        setRegistrationsEventId(selectedId)
+        const selectedEvent = eventData.items.find((item) => item.id === selectedId)
+        setCapacityInput(selectedEvent ? String(selectedEvent.capacity) : '')
       })
       .catch((reason: unknown) => { if (active) setError(errorMessage(reason)) })
       .finally(() => { if (active) setLoading(false) })
@@ -41,13 +66,56 @@ export default function App() {
     setError('')
     setNotice('')
     try {
-      await addRegistration(selectedId, name.trim(), email.trim())
+      const registration = await addRegistration(selectedId, name.trim(), email.trim())
       setName('')
       setEmail('')
-      setNotice('报名已保存。')
+      setNotice(registration.status === 'waitlisted'
+        ? '活动已满，已加入候补。'
+        : '报名已确认。')
       refresh()
     } catch (reason) {
       setError(errorMessage(reason))
+      refresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function cancel(registration: Registration) {
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      await cancelRegistration(selectedId, registration.id)
+      setNotice(registration.status === 'active'
+        ? '退出已保存；如有候补，系统已自动补位。'
+        : '候补已退出。')
+      refresh()
+    } catch (reason) {
+      setError(errorMessage(reason))
+      refresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveCapacity(submitEvent: FormEvent) {
+    submitEvent.preventDefault()
+    const capacity = Number(capacityInput)
+    if (!Number.isInteger(capacity) || capacity < 0) {
+      setError('活动名额必须是非负整数。')
+      return
+    }
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      await updateEventCapacity(selectedId, capacity)
+      setNotice('活动名额已更新，候补补位结果已同步。')
+      refresh()
+    } catch (reason) {
+      setError(errorMessage(reason))
+      refresh()
     } finally {
       setBusy(false)
     }
@@ -63,6 +131,7 @@ export default function App() {
       setNotice('已恢复初始演示数据。')
     } catch (reason) {
       setError(errorMessage(reason))
+      refresh()
     } finally {
       setBusy(false)
     }
@@ -74,6 +143,10 @@ export default function App() {
     setNotice('')
     setName('')
     setEmail('')
+    setRegistrations([])
+    setRegistrationsEventId('')
+    const selectedEvent = events.find((item) => item.id === id)
+    setCapacityInput(selectedEvent ? String(selectedEvent.capacity) : '')
   }
 
   return (
@@ -98,7 +171,7 @@ export default function App() {
                 onClick={() => selectEvent(item.id)} aria-pressed={selectedId === item.id}>
                 <div className="event-card-top"><span className={`category category-${index}`}>{item.category}</span><span className="card-arrow">↗</span></div>
                 <h3>{item.title}</h3><p>{item.date} · {item.time}</p>
-                <div className="event-card-bottom"><span>{item.location}</span><strong>{item.activeCount}<span> / {item.capacity} 人</span></strong></div>
+                <div className="event-card-bottom"><span>{item.location}</span><strong>{item.id === selectedId ? (activeCount ?? '…') : item.activeCount}<span> / {item.capacity} 人</span></strong></div>
               </button>
             ))}
             <div className="sidebar-note"><span>✳</span><p>小小的活动，<br />让社区更有温度。</p></div>
@@ -107,13 +180,24 @@ export default function App() {
           <section className="detail-panel" aria-label="报名管理" aria-busy={loading}>
             <div className="detail-heading"><div><p className="eyebrow">REGISTRATION DESK</p><h2>{event?.title ?? '加载活动…'}</h2><p>{event?.description ?? '正在获取活动信息。'}</p></div><span className="detail-symbol">✳</span></div>
             <div className="stats-row">
-              <div><span>已报名</span><strong data-testid="active-count">{event?.activeCount ?? '—'}<small> 人</small></strong></div>
-              <div><span>剩余名额</span><strong>{event ? event.capacity - event.activeCount : '—'}<small> 席</small></strong></div>
+              <div><span>已报名</span><strong data-testid="active-count">{activeCount ?? '—'}<small> 人</small></strong></div>
+              <div><span>候补</span><strong>{waitlistedCount ?? '—'}<small> 人</small></strong></div>
+              <div><span>已退出</span><strong>{cancelledCount ?? '—'}<small> 人</small></strong></div>
+              <div><span>剩余名额</span><strong>{remainingCount ?? '—'}<small> 席</small></strong></div>
               <div><span>活动地点</span><strong className="location-stat">{event?.location ?? '—'}</strong></div>
             </div>
 
             {error && <div className="message error" role="alert">{error}</div>}
             {notice && <div className="message success" role="status">{notice}</div>}
+
+            <section className="capacity-control">
+              <div><h3>活动名额</h3><p>提交总名额；增加后系统会依候补顺序自动补位。</p></div>
+              <form onSubmit={saveCapacity}>
+                <label>总名额<input name="capacity" type="number" min="0" step="1" value={capacityInput}
+                  onChange={(changeEvent) => setCapacityInput(changeEvent.target.value)} required disabled={busy || loading || !event} /></label>
+                <button className="secondary-button" type="submit" disabled={busy || loading || !event}>保存名额</button>
+              </form>
+            </section>
 
             <section className="registration-form">
               <div className="form-heading"><h3>添加报名</h3><span>为新的参与者留一个位置</span></div>
@@ -125,17 +209,20 @@ export default function App() {
             </section>
 
             <section className="roster">
-              <div className="roster-heading"><h3>报名名单 <span>{loading ? '…' : registrations.length}</span></h3><button className="text-button" disabled={loading || busy} onClick={refresh}>刷新列表 ↻</button></div>
-              <div className="table-scroll"><table><thead><tr><th>参与者</th><th>联系邮箱</th><th>状态</th></tr></thead>
+              <div className="roster-heading"><h3>全部记录 <span>{loading ? '…' : registrations.length}</span></h3><button className="text-button" disabled={loading || busy} onClick={refresh}>刷新列表 ↻</button></div>
+              <div className="table-scroll"><table><thead><tr><th>参与者</th><th>联系邮箱</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody>{!loading && registrations.map((registration, index) => (
                   <tr key={registration.id} data-testid={`registration-${registration.id}`}>
                     <td><span className={`avatar avatar-${index % 3}`}>{registration.name.slice(0, 1)}</span><strong>{registration.name}</strong></td>
                     <td className="email-cell">{registration.email}</td>
-                    <td><span className={`status ${registration.status}`}>{registration.status === 'active' ? '已报名' : '已取消'}</span></td>
+                    <td><span className={`status ${registration.status}`}>{registration.status === 'active' ? '已报名' : registration.status === 'waitlisted' ? '候补' : '已退出'}</span>
+                      {registration.status === 'waitlisted' && <small className="waitlist-position">候补第 {waitlistPositions.get(registration.id)} 位</small>}</td>
+                    <td>{registration.status !== 'cancelled' && <button className="exit-button" type="button" disabled={busy || loading}
+                      onClick={() => cancel(registration)} aria-label={`退出 ${registration.name}`}>退出</button>}</td>
                   </tr>
                 ))}</tbody></table></div>
               {loading && <p className="empty-state">正在加载名单…</p>}
-              {!loading && registrations.length === 0 && <p className="empty-state">还没有人报名，添加第一位参与者吧。</p>}
+              {!loading && registrations.length === 0 && <p className="empty-state">还没有报名或候补记录，添加第一位参与者吧。</p>}
             </section>
             <div className="detail-footer"><span className="tiny-dot" />数据保存在本地服务内存中，重启后恢复初始状态。</div>
           </section>

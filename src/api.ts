@@ -15,7 +15,7 @@ export interface Registration {
   eventId: string
   name: string
   email: string
-  status: 'active' | 'cancelled'
+  status: 'active' | 'waitlisted' | 'cancelled'
   createdAt: string
 }
 
@@ -46,5 +46,13 @@ export const getRegistrations = (id: string) =>
 export const addRegistration = (id: string, name: string, email: string) =>
   request<Registration>(`/events/${id}/registrations`, {
     method: 'POST', body: JSON.stringify({ name, email }),
+  })
+export const cancelRegistration = (eventId: string, registrationId: string) =>
+  request<Registration>(`/events/${eventId}/registrations/${registrationId}`, {
+    method: 'PATCH', body: JSON.stringify({ status: 'cancelled' }),
+  })
+export const updateEventCapacity = (eventId: string, capacity: number) =>
+  request<Event>(`/events/${eventId}`, {
+    method: 'PATCH', body: JSON.stringify({ capacity }),
   })
 export const resetDemo = () => request<{ ok: boolean }>('/demo/reset', { method: 'POST' })
